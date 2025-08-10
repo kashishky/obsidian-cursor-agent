@@ -47,14 +47,16 @@ class CursorAgentPlugin extends Plugin {
   }
 
   runCursorCommand(prompt, onData, onClose) {
-    const args = this.settings.defaultArgs.trim().length > 0 ? this.settings.defaultArgs.split(/\s+/) : [];
+    const argsString = (this.settings.defaultArgs && this.settings.defaultArgs.trim()) || '';
     const vaultRoot = this.app.vault.adapter && typeof this.app.vault.adapter.getBasePath === 'function'
       ? this.app.vault.adapter.getBasePath()
       : undefined;
     const cwd = this.settings.workingDirectory || vaultRoot || undefined;
-    const child = spawn(this.settings.cliPath, args, {
+    // Preserve user quoting by executing the full command via the shell
+    const commandLine = `${this.settings.cliPath}${argsString ? ' ' + argsString : ''}`;
+    const child = spawn(commandLine, {
       cwd,
-      shell: process.platform === 'win32',
+      shell: true,
       env: process.env,
     });
 

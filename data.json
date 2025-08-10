@@ -1,0 +1,8 @@
+{
+  "cliPath": "cursor",
+  "workingDirectory": "",
+  "defaultArgs": "--model gpt-5",
+  "theme": "sith",
+  "maxBufferKb": 2048,
+  "showTimestamp": true
+}

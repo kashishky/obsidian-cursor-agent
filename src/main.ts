@@ -66,12 +66,16 @@ export default class CursorAgentPlugin extends Plugin {
   }
 
   runCursorCommand(prompt: string, onData: (chunk: string) => void, onClose: (code: number|null, err?: Error) => void) {
-    const args = this.settings.defaultArgs.trim().length > 0 ? this.settings.defaultArgs.split(/\s+/) : [];
+    const argsString = this.settings.defaultArgs?.trim() ?? '';
     const vaultRoot = (this.app.vault.adapter as any)?.getBasePath?.();
     const cwd = this.settings.workingDirectory || vaultRoot || undefined;
-    const child = spawn(this.settings.cliPath, args, {
+
+    // Execute as a single shell command to preserve user-provided quoting inside Default args.
+    // This allows patterns like: wsl.exe bash -lc "cursor-agent --model gpt-5 -p \"$(cat)\""
+    const commandLine = `${this.settings.cliPath}${argsString ? ' ' + argsString : ''}`;
+    const child = spawn(commandLine, {
       cwd,
-      shell: process.platform === 'win32',
+      shell: true,
       env: process.env,
     });
 
