@@ -1,0 +1,10 @@
+{
+  "id": "cursor-agent",
+  "name": "Cursor Agent",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Integrate an external Cursor CLI agent into Obsidian with themed chat UI and commands.",
+  "author": "Kashish",
+  "authorUrl": "",
+  "isDesktopOnly": true
+}

@@ -1,0 +1,112 @@
+/* Base layout */
+.cursor-agent-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.ca-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ca-title {
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+.ca-chat {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 8px;
+}
+.ca-input-wrap {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.ca-input {
+  resize: vertical;
+}
+.ca-send {
+  align-self: end;
+}
+.ca-bubble {
+  padding: 10px 12px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+}
+.ca-user {
+  align-self: flex-end;
+}
+.ca-assistant {
+  align-self: flex-start;
+}
+
+/* Obsidian default theme */
+.theme-obsidian-default .ca-bubble.ca-user {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.theme-obsidian-default .ca-bubble.ca-assistant {
+  background: var(--background-primary-alt);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+}
+
+/* Sith (Star Wars) */
+.theme-sith {
+  --ca-bg: #0b0000;
+  --ca-primary: #ff2e2e;
+  --ca-muted: #3d0a0a;
+  --ca-text: #ffefef;
+}
+.theme-sith .cursor-agent-root { background: var(--ca-bg); }
+.theme-sith .ca-title { color: var(--ca-primary); text-shadow: 0 0 8px rgba(255,46,46,0.6); }
+.theme-sith .ca-bubble.ca-user { background: var(--ca-primary); color: #1a0000; box-shadow: 0 0 8px rgba(255,46,46,0.6); }
+.theme-sith .ca-bubble.ca-assistant { background: var(--ca-muted); color: var(--ca-text); border: 1px solid #7a0000; }
+.theme-sith .ca-send { background: var(--ca-primary); color: #1a0000; }
+
+/* Jedi (Star Wars) */
+.theme-jedi {
+  --ca-bg: #00111a;
+  --ca-primary: #7fbfff;
+  --ca-muted: #08202b;
+  --ca-text: #e8f5ff;
+}
+.theme-jedi .cursor-agent-root { background: var(--ca-bg); }
+.theme-jedi .ca-title { color: var(--ca-primary); text-shadow: 0 0 8px rgba(127,191,255,0.5); }
+.theme-jedi .ca-bubble.ca-user { background: var(--ca-primary); color: #00111a; }
+.theme-jedi .ca-bubble.ca-assistant { background: var(--ca-muted); color: var(--ca-text); border: 1px solid #125a87; }
+.theme-jedi .ca-send { background: var(--ca-primary); color: #00111a; }
+
+/* Cowboy Bebop */
+.theme-cowboy-bebop {
+  --ca-bg: #0f0f0f;
+  --ca-primary: #e63946;
+  --ca-muted: #1c1c1c;
+  --ca-text: #f1faee;
+  --ca-accent: #457b9d;
+}
+.theme-cowboy-bebop .cursor-agent-root { background: var(--ca-bg); }
+.theme-cowboy-bebop .ca-title { color: var(--ca-accent); letter-spacing: 2px; }
+.theme-cowboy-bebop .ca-bubble.ca-user { background: var(--ca-primary); color: #fff; }
+.theme-cowboy-bebop .ca-bubble.ca-assistant { background: var(--ca-muted); color: var(--ca-text); border: 1px dashed var(--ca-accent); }
+.theme-cowboy-bebop .ca-send { background: var(--ca-accent); color: #fff; border-radius: 0; }
+
+/* Game of Thrones */
+.theme-game-of-thrones {
+  --ca-bg: #0b1020;
+  --ca-primary: #d4af37; /* gold */
+  --ca-muted: #151a2b;
+  --ca-text: #f6f1d3;
+}
+.theme-game-of-thrones .cursor-agent-root { background: var(--ca-bg); }
+.theme-game-of-thrones .ca-title { color: var(--ca-primary); font-variant: small-caps; }
+.theme-game-of-thrones .ca-bubble.ca-user { background: var(--ca-primary); color: #0b1020; }
+.theme-game-of-thrones .ca-bubble.ca-assistant { background: var(--ca-muted); color: var(--ca-text); border: 1px solid #7a6a2b; }
+.theme-game-of-thrones .ca-send { background: var(--ca-primary); color: #0b1020; }
