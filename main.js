@@ -1,6 +1,6 @@
 'use strict';
 
-const { App, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView, Modal } = require('obsidian');
+const { App, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, ItemView, Modal, MarkdownView } = require('obsidian');
 const { spawn } = require('child_process');
 
 const DEFAULT_SETTINGS = {
@@ -10,6 +10,12 @@ const DEFAULT_SETTINGS = {
   theme: 'obsidian-default',
   maxBufferKb: 2048,
   showTimestamp: true,
+  inputDirectory: '',
+  directoryPresets: '',
+  backgroundImage: '',
+  backgroundOpacity: 0.2,
+  interactiveMode: false,
+  mode: 'chat',
 };
 
 class CursorAgentPlugin extends Plugin {
@@ -18,8 +24,8 @@ class CursorAgentPlugin extends Plugin {
 
     this.registerView(CursorAgentView.VIEW_TYPE, (leaf) => new CursorAgentView(leaf, this));
 
-    this.addRibbonIcon('bot', 'Cursor Agent', () => this.activateView());
-    this.addCommand({ id: 'cursor-agent-open', name: 'Open Cursor Agent', callback: () => this.activateView() });
+    this.addRibbonIcon('bot', 'Three-Eyed Raven', () => this.activateView());
+    this.addCommand({ id: 'cursor-agent-open', name: 'Open Three-Eyed Raven', callback: () => this.activateView() });
 
     this.addSettingTab(new CursorAgentSettingTab(this.app, this));
   }
@@ -52,37 +58,105 @@ class CursorAgentPlugin extends Plugin {
       ? this.app.vault.adapter.getBasePath()
       : undefined;
     const cwd = this.settings.workingDirectory || vaultRoot || undefined;
-    // Preserve user quoting by executing the full command via the shell
-    const commandLine = `${this.settings.cliPath}${argsString ? ' ' + argsString : ''}`;
-    const child = spawn(commandLine, {
-      cwd,
-      shell: true,
-      env: process.env,
-    });
+    // Token substitution helpers
+    const toWslPath = (p) => {
+      if (!p) return '';
+      if (/^[A-Za-z]:\\/.test(p)) {
+        const drive = p[0].toLowerCase();
+        const rest = p.slice(2).replace(/\\/g, '/');
+        return `/mnt/${drive}/${rest}`;
+      }
+      return p;
+    };
+    const usedPromptToken = /\{prompt(Bash)?\}/.test(argsString);
+    const bashEscapedPrompt = `'${String(prompt).replace(/'/g, `'"'"'`)}'`;
+    const substitutedArgs = (argsString)
+      .replace(/\{vault\}/g, vaultRoot || '')
+      .replace(/\{inputDir\}/g, this.settings.inputDirectory || '')
+      .replace(/\{inputDirWsl\}/g, toWslPath(this.settings.inputDirectory))
+      .replace(/\{promptBash\}/g, bashEscapedPrompt)
+      .replace(/\{prompt\}/g, String(prompt));
+    let child;
+    const cliPathLower = this.settings.cliPath.toLowerCase();
+    const isWsl = cliPathLower.endsWith('wsl.exe') || cliPathLower === 'wsl';
+    if (isWsl) {
+      const m = substitutedArgs.match(/bash\s+-lc\s+(?:(["'])([\s\S]*)\1|(.+))/i);
+      let commandInside = m ? (m[2] || m[3] || '').trim() : substitutedArgs.trim();
+      if (!/\bcd\b/i.test(commandInside)) {
+        const inputDir = (this.settings.inputDirectory || '').trim();
+        const defaultVault = toWslPath(vaultRoot || '');
+        const target = inputDir.length ? toWslPath(inputDir) : defaultVault;
+        if (target) {
+          const qTarget = `'` + String(target).replace(/'/g, `"'"'`) + `'`;
+          commandInside = `cd -- ${qTarget} && ${commandInside}`;
+        }
+      }
+      child = spawn(this.settings.cliPath, ['--', 'bash', '-lc', commandInside], { cwd: undefined, shell: false, env: process.env });
+    } else {
+      const commandLine = `${this.settings.cliPath}${substitutedArgs ? ' ' + substitutedArgs : ''}`;
+      child = spawn(commandLine, { cwd, shell: true, env: process.env });
+    }
 
     const maxBytes = this.settings.maxBufferKb * 1024;
     let seenBytes = 0;
+    let sawOutput = false;
+
+    const looksLikeUtf16le = (buf) => {
+      if (buf.length >= 2) {
+        const bomLE = buf[0] === 0xFF && buf[1] === 0xFE;
+        const bomBE = buf[0] === 0xFE && buf[1] === 0xFF;
+        if (bomLE || bomBE) return true;
+      }
+      let zeroCount = 0;
+      const sample = Math.min(buf.length, 256);
+      for (let i = 1; i < sample; i += 2) if (buf[i] === 0x00) zeroCount++;
+      return zeroCount > (sample / 6);
+    };
+    const decodeChunk = (data) => {
+      let text = looksLikeUtf16le(data) ? data.toString('utf16le') : data.toString('utf8');
+      text = text.replace(/\x1B\[[0-?]*[ -\/]*[@-~]/g, '');
+      text = text.replace(/\r(?!\n)/g, '\n');
+      return text;
+    };
+
+    const resetIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch {}
+        onClose(1, new Error('Process timed out (no output)'));
+      }, 60000);
+    };
+    let idleTimer = null;
+    resetIdle();
 
     child.stdout.on('data', (data) => {
+      sawOutput = true;
+      resetIdle();
       seenBytes += data.length;
       if (seenBytes > maxBytes) {
         child.kill('SIGKILL');
         onClose(1, new Error('Output exceeded max buffer'));
         return;
       }
-      onData(data.toString('utf8'));
+      onData(decodeChunk(data));
     });
 
     child.stderr.on('data', (data) => {
-      onData(`\n[stderr] ${data.toString('utf8')}`);
+      resetIdle();
+      onData(`\n[stderr] ${decodeChunk(data)}`);
     });
 
     child.on('error', (err) => onClose(1, err));
-    child.on('close', (code) => onClose(code));
+    child.on('close', (code) => {
+      if (idleTimer) clearTimeout(idleTimer);
+      onClose(code);
+    });
 
     try {
-      child.stdin.write(prompt);
-      child.stdin.end();
+      if (!usedPromptToken) {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      }
     } catch (err) {
       onClose(1, err);
     }
@@ -110,9 +184,42 @@ class CursorAgentView extends ItemView {
     this.themeEl = root.createEl('div', { cls: ['cursor-agent-root', `theme-${this.plugin.settings.theme}`] });
 
     const header = this.themeEl.createEl('div', { cls: 'ca-header' });
-    header.createEl('div', { text: 'Cursor Agent', cls: 'ca-title' });
+    const actions = header.createEl('div', { cls: 'ca-actions' });
+    const dirBadge = actions.createEl('div', { cls: 'ca-dir-badge' });
+    const refreshDirBtn = actions.createEl('button', { cls: 'ca-action ca-icon', text: '↻' });
+    const copyAllBtn = actions.createEl('button', { cls: 'ca-action ca-small', text: 'Copy All' });
+    const stopBtn = actions.createEl('button', { cls: 'ca-action ca-small', text: 'Stop' });
+    const modeSelect = actions.createEl('select', { cls: 'ca-select ca-action' });
+    modeSelect.createEl('option', { text: 'Chat', attr: { value: 'chat' } });
+    modeSelect.createEl('option', { text: 'Terminal', attr: { value: 'terminal' } });
+    modeSelect.value = this.plugin.settings.mode;
 
-    new Setting(header)
+    const hydrateDir = () => {
+      const current = (this.plugin.settings.inputDirectory || '').trim() || (this.plugin.settings.workingDirectory || '').trim() || 'vault';
+      dirBadge.empty();
+      dirBadge.createEl('span', { text: '📁', cls: 'ca-dir-icon' });
+      dirBadge.createEl('span', { text: current, cls: 'ca-dir-text' });
+    };
+    hydrateDir();
+    refreshDirBtn.onclick = hydrateDir;
+    copyAllBtn.onclick = async () => {
+      const content = Array.from(this.chatEl.querySelectorAll('.ca-bubble .ca-bubble-body')).map((el) => el.innerText).join('\n');
+      await navigator.clipboard.writeText(content);
+      new Notice('Copied conversation to clipboard');
+    };
+    stopBtn.onclick = () => { try { this.plugin.currentChild?.kill?.('SIGINT'); } catch {} };
+    modeSelect.onchange = async () => {
+      this.plugin.settings.mode = modeSelect.value;
+      await this.plugin.saveSettings();
+      this.chatEl.empty();
+      if (modeSelect.value === 'terminal') {
+        const info = this.chatEl.createEl('div', { cls: 'ca-bubble ca-assistant' });
+        info.setText('Terminal mode enabled. Type commands and press Enter.');
+      }
+    };
+
+    const themeWrap = header.createEl('div', { cls: 'ca-theme-wrap' });
+    new Setting(themeWrap)
       .addDropdown((dd) => dd
         .addOptions({
           'obsidian-default': 'Obsidian',
@@ -130,16 +237,41 @@ class CursorAgentView extends ItemView {
       );
 
     this.chatEl = this.themeEl.createEl('div', { cls: 'ca-chat' });
+    const bg = this.chatEl.createEl('div', { cls: 'ca-bg-overlay' });
+    const img = (this.plugin.settings.backgroundImage || '').trim();
+    const opacity = this.plugin.settings.backgroundOpacity ?? 0.2;
+    const toFileUrl = (p) => {
+      if (!p) return '';
+      if (/^https?:\/\//i.test(p) || /^file:\/\//i.test(p)) return p;
+      const normalized = p.replace(/\\/g, '/');
+      if (/^[A-Za-z]:\//.test(normalized)) {
+        return 'file:///' + encodeURI(normalized);
+      }
+      return 'file://' + encodeURI(normalized);
+    };
+    if (img) {
+      const cssUrl = toFileUrl(img);
+      bg.style.setProperty('background-image', `url("${cssUrl}")`);
+      this.chatEl.style.setProperty('--ca-bg-opacity', String(opacity));
+    } else {
+      bg.style.display = 'none';
+    }
 
     const inputWrap = this.themeEl.createEl('div', { cls: 'ca-input-wrap' });
-    this.inputEl = inputWrap.createEl('textarea', { cls: 'ca-input', attr: { rows: '3', placeholder: 'Ask the agent…' } });
+    this.inputEl = inputWrap.createEl('textarea', { cls: 'ca-input', attr: { rows: '3', placeholder: 'run won\'t you…' } });
     const sendBtn = inputWrap.createEl('button', { cls: 'ca-send', text: 'Send' });
 
     const send = () => this.handleSend();
     sendBtn.addEventListener('click', send);
     this.inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
+      if (e.key === 'Enter') {
+        if (e.shiftKey) return;
+        e.preventDefault();
+        send();
+      }
     });
+
+    // per-message actions are added in renderBubble
   }
 
   async sendPrompt(prompt, onComplete) {
@@ -191,8 +323,15 @@ class CursorAgentView extends ItemView {
 
   renderBubble(role, text) {
     const bubble = this.chatEl.createEl('div', { cls: ['ca-bubble', `ca-${role}`] });
-    bubble.setText(text);
-    return bubble;
+    const body = bubble.createEl('div', { cls: 'ca-bubble-body' });
+    body.setText(text);
+    const actions = bubble.createEl('div', { cls: 'ca-bubble-actions' });
+    const copyBtn = actions.createEl('button', { cls: 'ca-action ca-chip', text: 'Copy' });
+    copyBtn.onclick = async () => {
+      await navigator.clipboard.writeText(body.innerText);
+      new Notice('Copied');
+    };
+    return body;
   }
 }
 
@@ -210,9 +349,9 @@ class CursorAgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('CLI path')
-      .setDesc('Path to Cursor CLI executable (e.g., cursor, /usr/local/bin/cursor)')
+      .setDesc('Windows (with WSL): C:\\Windows\\System32\\wsl.exe. Linux/macOS: cursor-agent.')
       .addText((text) => text
-        .setPlaceholder('cursor')
+        .setPlaceholder('wsl.exe or cursor-agent')
         .setValue(this.plugin.settings.cliPath)
         .onChange(async (value) => {
           this.plugin.settings.cliPath = value.trim();
@@ -221,7 +360,7 @@ class CursorAgentSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Working directory')
-      .setDesc('Directory for the CLI process (empty = vault root)')
+      .setDesc('Process cwd. Use only for Windows-native CLIs. Leave empty for WSL; instead cd inside Default args.')
       .addText((text) => text
         .setPlaceholder('')
         .setValue(this.plugin.settings.workingDirectory)
@@ -231,16 +370,64 @@ class CursorAgentSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('Default args')
-      .setDesc('Arguments passed to the CLI each run')
+      .setName('Input directory')
+      .setDesc('Windows path for your project. Tokens: {inputDir} (Windows), {inputDirWsl} (auto-converted for WSL).')
       .addText((text) => text
-        .setPlaceholder('--model gpt-4.1')
+        .setPlaceholder('C:\\path\\to\\project')
+        .setValue(this.plugin.settings.inputDirectory)
+        .onChange(async (value) => {
+          this.plugin.settings.inputDirectory = value.trim();
+          await this.plugin.saveSettings();
+          this.app.workspace.trigger('cursor-agent:settings-updated');
+        }));
+
+    new Setting(containerEl)
+      .setName('Chat background (image/GIF)')
+      .setDesc('URL or absolute file path; overlaid translucent image above Obsidian background')
+      .addText((text) => text
+        .setPlaceholder('https://… or C:\\path\\image.png')
+        .setValue(this.plugin.settings.backgroundImage)
+        .onChange(async (value) => {
+          this.plugin.settings.backgroundImage = value.trim();
+          await this.plugin.saveSettings();
+          this.app.workspace.trigger('cursor-agent:settings-updated');
+        }));
+
+    new Setting(containerEl)
+      .setName('Chat background opacity')
+      .setDesc('0.0 (invisible) to 1.0 (opaque)')
+      .addText((text) => text
+        .setPlaceholder('0.2')
+        .setValue(String(this.plugin.settings.backgroundOpacity))
+        .onChange(async (value) => {
+          const v = Number(value);
+          if (!Number.isNaN(v) && v >= 0 && v <= 1) {
+            this.plugin.settings.backgroundOpacity = v;
+            await this.plugin.saveSettings();
+            this.app.workspace.trigger('cursor-agent:settings-updated');
+          }
+        }));
+
+    new Setting(containerEl)
+      .setName('Default args')
+      .setDesc('For WSL, use: bash -lc "cursor-agent -p {promptBash} --model gpt-5 --output-format text" (cd is injected if not provided)')
+      .addText((text) => text
+        .setPlaceholder('bash -lc "cd {inputDirWsl}; cursor-agent -p {promptBash} --model gpt-5 --output-format text"')
         .setValue(this.plugin.settings.defaultArgs)
         .onChange(async (value) => {
           this.plugin.settings.defaultArgs = value;
           await this.plugin.saveSettings();
         }));
 
+    new Setting(containerEl)
+      .setName('Interactive mode')
+      .setDesc('Keep the process running and send subsequent messages to stdin (for Y/N prompts).')
+      .addToggle((toggle) => toggle
+        .setValue(this.plugin.settings.interactiveMode)
+        .onChange(async (value) => {
+          this.plugin.settings.interactiveMode = value;
+          await this.plugin.saveSettings();
+        }));
     new Setting(containerEl)
       .setName('Max buffer (KB)')
       .setDesc('Kill process if output exceeds this size')
