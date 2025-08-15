@@ -2,7 +2,7 @@
   "cliPath": "C:\\Windows\\System32\\wsl.exe",
   "workingDirectory": "",
   "defaultArgs": "bash -lc \"printf %s \\\"{promptBash}\\\" | cursor-agent -p \\\"\\$(cat)\\\" --model gpt-5 --output-format text\"",
-  "theme": "jedi",
+  "theme": "sith",
   "maxBufferKb": 2048,
   "showTimestamp": false,
   "inputDirectory": "",
